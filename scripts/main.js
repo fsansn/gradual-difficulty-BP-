@@ -20,7 +20,8 @@ function getDifficulty(player) {
     return 0.01 * distance / level;
 }
 
-// ダメージ発生前に、与ダメージと被ダメージを補正する。
+
+ // ダメージ発生前に、与ダメージと被ダメージを補正する。
 world.beforeEvents.entityHurt.subscribe((event) => {
     try {
         let damage = event.damage;
@@ -30,12 +31,51 @@ world.beforeEvents.entityHurt.subscribe((event) => {
 
         // プレイヤーが攻撃した場合：与ダメージを c 除算
         if (attacker?.typeId === "minecraft:player") {
-            damage /= getDifficulty(attacker);
+            const difficulty = getDifficulty(attacker);
+            damage /= difficulty;
+
+            const percent = Math.round(100 / difficulty);
+            const color = percent > 100 ? "§c"
+                : percent < 100 ? "§9" : "§f";
+
+            // Beforeイベント内では表示処理を直接行わず、次のtickに実行する。
+            system.run(() => {
+                try {
+                    
+attacker.sendMessage(
+    `${color}Deal ${percent}\uFF05 Damage§r`
+);
+
+                } catch (error) {
+                    console.warn(
+                        `[GradualDifficulty] 与ダメージ表示エラー: ${error}`
+                    );
+                }
+            });
         }
 
         // プレイヤーが攻撃を受ける場合：被ダメージを c 倍
         if (victim.typeId === "minecraft:player") {
-            damage *= getDifficulty(victim);
+            const difficulty = getDifficulty(victim);
+            damage *= difficulty;
+
+            const percent = Math.round(difficulty * 100);
+            const color = percent > 100 ? "§c"
+                : percent < 100 ? "§9" : "§f";
+
+            system.run(() => {
+                try {
+
+victim.sendMessage(
+    `${color}Take ${percent}\uFF05 Damage§r`
+);
+
+                } catch (error) {
+                    console.warn(
+                        `[GradualDifficulty] 被ダメージ表示エラー: ${error}`
+                    );
+                }
+            });
         }
 
         event.damage = damage;
@@ -43,6 +83,7 @@ world.beforeEvents.entityHurt.subscribe((event) => {
         console.warn(`[GradualDifficulty] ダメージ補正エラー: ${error}`);
     }
 });
+
 
 // 1ゲームティックごとに経験値と表示を更新する。
 system.runInterval(() => {
