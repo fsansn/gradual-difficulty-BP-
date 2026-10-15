@@ -1,8 +1,20 @@
 
 import { world, system } from "@minecraft/server";
 
+// デバッグ用の常時表示。通常プレイでは false にする。
+const debug = false;
+
 // 前回確認したプレイヤーの総経験値
 const lastTotalXp = new Map();
+
+// 一時表示するアクションバーの内容
+const temporaryActionBars = new Map();
+
+// ゲーム内の経過tick
+let currentTick = 0;
+
+// 一時表示の長さ（20 tick = 約1秒）
+const ACTION_BAR_DURATION = 20;
 
 // 座標から距離を計算する。
 // 水平座標のうち、原点から遠い方を採用する。
@@ -20,8 +32,23 @@ function getDifficulty(player) {
     return 0.01 * distance / level;
 }
 
+// 補正倍率に応じた色を返す。
+function getPercentColor(percent) {
+    if (percent > 100) return "§c";
+    if (percent < 100) return "§9";
+    return "§f";
+}
 
- // ダメージ発生前に、与ダメージと被ダメージを補正する。
+// アクションバーに一時表示する。
+// 同じプレイヤーへの新しい表示で古い表示を上書きする。
+function showTemporaryActionBar(player, message) {
+    temporaryActionBars.set(player.id, {
+        message,
+        expiresAt: currentTick + ACTION_BAR_DURATION
+    });
+}
+
+// ダメージ発生前に、与ダメージと被ダメージを補正する。
 world.beforeEvents.entityHurt.subscribe((event) => {
     try {
         let damage = event.damage;
@@ -35,17 +62,15 @@ world.beforeEvents.entityHurt.subscribe((event) => {
             damage /= difficulty;
 
             const percent = Math.round(100 / difficulty);
-            const color = percent > 100 ? "§c"
-                : percent < 100 ? "§9" : "§f";
+            const color = getPercentColor(percent);
 
-            // Beforeイベント内では表示処理を直接行わず、次のtickに実行する。
+            // Beforeイベントの後に表示処理を行う。
             system.run(() => {
                 try {
-                    
-attacker.sendMessage(
-    `${color}Deal ${percent}\uFF05 Damage§r`
-);
-
+                    showTemporaryActionBar(
+                        attacker,
+                        `${color}Deal ${percent}\uFF05 Damage§r`
+                    );
                 } catch (error) {
                     console.warn(
                         `[GradualDifficulty] 与ダメージ表示エラー: ${error}`
@@ -60,16 +85,14 @@ attacker.sendMessage(
             damage *= difficulty;
 
             const percent = Math.round(difficulty * 100);
-            const color = percent > 100 ? "§c"
-                : percent < 100 ? "§9" : "§f";
+            const color = getPercentColor(percent);
 
             system.run(() => {
                 try {
-
-victim.sendMessage(
-    `${color}Take ${percent}\uFF05 Damage§r`
-);
-
+                    showTemporaryActionBar(
+                        victim,
+                        `${color}Take ${percent}\uFF05 Damage§r`
+                    );
                 } catch (error) {
                     console.warn(
                         `[GradualDifficulty] 被ダメージ表示エラー: ${error}`
@@ -84,9 +107,10 @@ victim.sendMessage(
     }
 });
 
-
 // 1ゲームティックごとに経験値と表示を更新する。
 system.runInterval(() => {
+    currentTick++;
+
     const players = world.getPlayers();
     const onlineIds = new Set(players.map((player) => player.id));
 
@@ -94,6 +118,12 @@ system.runInterval(() => {
     for (const id of lastTotalXp.keys()) {
         if (!onlineIds.has(id)) {
             lastTotalXp.delete(id);
+        }
+    }
+
+    for (const id of temporaryActionBars.keys()) {
+        if (!onlineIds.has(id)) {
+            temporaryActionBars.delete(id);
         }
     }
 
@@ -112,37 +142,46 @@ system.runInterval(() => {
                 const previousXp = lastTotalXp.get(player.id);
                 const gainedXp = totalXp - previousXp;
 
+                if (gainedXp > 0) {
+                    // バニラの獲得経験値を100%とした補正倍率。
+                    const multiplier = 1 + 0.01 * distance;
+                    const percent = Math.round(multiplier * 100);
 
-if (gainedXp > 0) {
-    // 距離に応じた経験値補正倍率を計算する。
-    // バニラで得られる経験値を100%として表示する。
-    const multiplier = 1 + 0.01 * distance;
-    const percent = Math.round(multiplier * 100);
+                    showTemporaryActionBar(
+                        player,
+                        `§aGained ${percent}\uFF05 EXP§r`
+                    );
 
-    player.sendMessage(
-        `§aGained ${percent}\uFF05 EXP§r`
-    );
+                    // 追加経験値は整数に切り捨てる。
+                    const bonusXp = Math.floor(
+                        gainedXp * 0.01 * distance
+                    );
 
-    // 追加経験値は整数に切り捨てる。
-    const bonusXp = Math.floor(
-        gainedXp * 0.01 * distance
-    );
-
-    if (bonusXp > 0) {
-        player.addExperience(bonusXp);
-    }
-}
-
+                    if (bonusXp > 0) {
+                        player.addExperience(bonusXp);
+                    }
+                }
 
                 // ボーナス加算後の値を記録し、二重加算を防ぐ。
                 lastTotalXp.set(player.id, player.getTotalXp());
             }
 
-            player.onScreenDisplay.setActionBar(
-                `Lv.${level} ` +
-                `XYZ(${Math.floor(x)}, ${Math.floor(y)}, ${Math.floor(z)}) ` +
-                `補正値: ${difficulty.toFixed(2)}`
-            );
+            // 一時メッセージがあれば優先し、なければ通常表示に戻す。
+            const temporary = temporaryActionBars.get(player.id);
+
+            if (temporary && currentTick < temporary.expiresAt) {
+                player.onScreenDisplay.setActionBar(temporary.message);
+            } else {
+                temporaryActionBars.delete(player.id);
+
+if (debug) {
+    player.onScreenDisplay.setActionBar(
+        `Lv.${level} ` +
+        `XYZ(${Math.floor(x)}, ${Math.floor(y)}, ${Math.floor(z)}) ` +
+        `補正値: ${difficulty.toFixed(2)}`
+    );
+}
+            }
         } catch (error) {
             console.warn(
                 `[GradualDifficulty] ${player.name}: ${error}`
