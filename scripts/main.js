@@ -112,17 +112,27 @@ system.runInterval(() => {
                 const previousXp = lastTotalXp.get(player.id);
                 const gainedXp = totalXp - previousXp;
 
-                if (gainedXp > 0) {
-                    // 距離に応じた追加経験値。
-                    // 追加分を整数に切り捨てる。
-                    const bonusXp = Math.floor(
-                        gainedXp * 0.01 * distance
-                    );
 
-                    if (bonusXp > 0) {
-                        player.addExperience(bonusXp);
-                    }
-                }
+if (gainedXp > 0) {
+    // 距離に応じた経験値補正倍率を計算する。
+    // バニラで得られる経験値を100%として表示する。
+    const multiplier = 1 + 0.01 * distance;
+    const percent = Math.round(multiplier * 100);
+
+    player.sendMessage(
+        `§aGained ${percent}\uFF05 EXP§r`
+    );
+
+    // 追加経験値は整数に切り捨てる。
+    const bonusXp = Math.floor(
+        gainedXp * 0.01 * distance
+    );
+
+    if (bonusXp > 0) {
+        player.addExperience(bonusXp);
+    }
+}
+
 
                 // ボーナス加算後の値を記録し、二重加算を防ぐ。
                 lastTotalXp.set(player.id, player.getTotalXp());
